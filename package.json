@@ -1,6 +1,6 @@
 {
   "name": "@havelaer/vite-plugin-ssr",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "SSR for Vite",
   "type": "module",
   "publishConfig": {
