@@ -1,5 +1,5 @@
 {
-  "name": "@havelaer/vite-ssr",
+  "name": "@havelaer/vite-plugin-ssr",
   "version": "0.0.2",
   "description": "SSR for Vite",
   "type": "module",
@@ -7,7 +7,7 @@
     "access": "public"
   },
   "exports": {
-    "./plugin": {
+    ".": {
       "import": "./dist/plugin.js",
       "types": "./dist/plugin.d.ts"
     }

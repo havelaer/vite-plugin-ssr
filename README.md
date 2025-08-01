@@ -4,10 +4,10 @@ SSR for Vite. And optional API servers. Build with Vite's new [Environment API](
 
 ## Getting Started
 
-Install the vite-ssr package.
+Install the SSR Vite plugin.
 
 ```bash
-npm install @havelaer/vite-ssr
+npm install @havelaer/vite-plugin-ssr
 ```
 
 Configure the plugin in your Vite config by providing the client entry, the SSR entry, and optionally the API entries.
@@ -17,7 +17,7 @@ The keys in the `apis` object are the names of the APIs. They are also used as b
 ```ts
 // vite.config.ts
 import { defineConfig } from "vite";
-import ssr from "@havelaer/vite-ssr/plugin";
+import ssr from "@havelaer/vite-plugin-ssr";
 
 export default defineConfig({
   plugins: [ssr({
