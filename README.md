@@ -72,13 +72,14 @@ export default function fetch(request: Request): Promise<Response> {
 
 ## Production
 
-First update your package.json to build all enviroments.
+First update your package.json to build all environments by adding the `--app` flag to the `vite build` script.
+Also add a `serve` script to run the server. 
 
 ```json
 {
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build --app", // Note the `--app` flag
+    "build": "vite build --app",
     "serve": "node server.js"
   }
 }
