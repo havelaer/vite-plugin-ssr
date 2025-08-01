@@ -20,6 +20,7 @@
     "build": "tsdown src/plugin.ts --dts",
     "dev": "tsdown src/plugin.ts --dts --watch",
     "lint": "biome check .",
+    "prepublishOnly": "npm run lint && npm run build && npm version patch -m 'chore: publishing version %s'",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
