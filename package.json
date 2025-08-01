@@ -3,6 +3,9 @@
   "version": "0.0.1",
   "description": "SSR for Vite",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     "./plugin": {
       "import": "./dist/plugin.js",
