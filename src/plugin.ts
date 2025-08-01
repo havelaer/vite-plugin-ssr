@@ -6,6 +6,7 @@ import {
   type ConfigEnv,
   createServerModuleRunner,
   type EnvironmentOptions,
+  normalizePath,
   type Plugin,
   type ResolvedConfig,
   type ViteDevServer,
@@ -75,9 +76,6 @@ export default function ssrPlugin(options: Options): Plugin {
     name: "havelaer-vite-ssr",
     sharedDuringBuild: true,
     enforce: "pre", // To catch our client entry ?url imports
-    configResolved(config) {
-      resolvedConfig = config;
-    },
     config(config, env) {
       configEnv = env;
       const outDirRoot = config.build?.outDir ?? "dist";
@@ -91,7 +89,7 @@ export default function ssrPlugin(options: Options): Plugin {
               copyPublicDir: true,
               emptyOutDir: false,
               rollupOptions: {
-                input: path.resolve(__dirname, getEntry(options.client)),
+                input: normalizePath(path.resolve(getEntry(options.client))),
                 output: {
                   entryFileNames: "static/entry-client.js",
                   chunkFileNames: "static/assets/[name]-[hash].js",
@@ -107,7 +105,7 @@ export default function ssrPlugin(options: Options): Plugin {
               emptyOutDir: false,
               ssrEmitAssets: false,
               rollupOptions: {
-                input: path.resolve(__dirname, getEntry(options.ssr)),
+                input: normalizePath(path.resolve(getEntry(options.ssr))),
                 output: {
                   entryFileNames: "entry-ssr.js",
                   chunkFileNames: "assets/[name]-[hash].js",
@@ -122,7 +120,7 @@ export default function ssrPlugin(options: Options): Plugin {
                   apiEnvironments[api] = getEnvironment(config, {
                     build: {
                       rollupOptions: {
-                        input: path.resolve(__dirname, getEntry(config)),
+                        input: normalizePath(path.resolve(getEntry(config))),
                         output: {
                           entryFileNames: `entry-${api}.js`,
                         },
@@ -158,6 +156,9 @@ export default function ssrPlugin(options: Options): Plugin {
         },
         appType: "custom",
       };
+    },
+    configResolved(config) {
+      resolvedConfig = config;
     },
     async configureServer(server) {
       viteServer = server;
@@ -213,7 +214,7 @@ export default function ssrPlugin(options: Options): Plugin {
     },
     resolveId(id, parent) {
       if (id.endsWith("?url") && parent) {
-        const resolvedClientEntry = path.resolve(__dirname, getEntry(options.client));
+        const resolvedClientEntry = normalizePath(path.resolve(getEntry(options.client)));
         const resolvedId = path.resolve(path.dirname(parent), id.slice(0, -4));
 
         if (resolvedId === resolvedClientEntry) {
@@ -239,7 +240,7 @@ export default function ssrPlugin(options: Options): Plugin {
         const content = injectedScripts
           .map((script) => script.content || `import "${script.src}";`)
           .join("\n");
-        return `${content}\nimport "${resolvedConfig.base}${getEntry(options.client)}";`;
+        return `${content}\nawait import("${resolvedConfig.base}${getEntry(options.client)}");`;
       }
     },
   };
