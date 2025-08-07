@@ -10,9 +10,9 @@ Install the SSR Vite plugin.
 npm install @havelaer/vite-plugin-ssr
 ```
 
-Configure the plugin in your Vite config by providing the client entry, the SSR entry, and optionally the API entries.
+Configure the plugin in your Vite config by providing the client entry, the SSR entry, and optionally one or more API entries.
 
-The keys in the `apis` object are the names of the APIs. They are also used as base path for the API requests. Eg. `/api*` requests will be sent to the `api` API.
+The keys in the `apis` object are the names of the APIs. The keys are also used as base path for the API requests. Eg. `/api*` requests will be sent to the `api` API.
 
 ```ts
 // vite.config.ts
