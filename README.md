@@ -51,7 +51,11 @@ export default function fetch(request: Request): Promise<Response> {
   return new Response(`
     <h1>Hello from server</h1>
     <script src="${clientEntryUrl}" type="module"></script>
-  `);
+  `, {
+    headers: {
+      "Content-Type": "text/html",
+    },
+  });
 }
 ```
 

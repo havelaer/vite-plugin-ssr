@@ -6,5 +6,9 @@ export default async function fetch(_request: Request): Promise<Response> {
     <div id="app"></div>
     <div id="api"></div>
     <script src="${clientEntryUrl}" type="module"></script>
-  `);
+  `, {
+    headers: {
+      "Content-Type": "text/html",
+    },
+  });
 }

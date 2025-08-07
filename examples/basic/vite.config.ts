@@ -1,5 +1,5 @@
 import { defineConfig } from "vite";
-import ssr from "../../src/plugin";
+import ssr from "@havelaer/vite-plugin-ssr";
 
 export default defineConfig({
   plugins: [ssr({
