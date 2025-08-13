@@ -33,6 +33,8 @@ type Options = {
   apis?: Record<string, string | APIConfig>;
 };
 
+type EntryMapping = Record<string, { input: string; inputFullPath: string; output: string }>;
+
 function getEntry(config: string | BaseEnvConfig): string {
   if (typeof config === "string") {
     return config;
@@ -71,6 +73,32 @@ export default function ssrPlugin(options: Options): Plugin {
   let resolvedConfig: ResolvedConfig;
   let configEnv: ConfigEnv;
   let injectedScripts: Array<{ content?: string; src?: string }> = [];
+  let outDirRoot = "dist";
+
+  const { apis } = options;
+
+  const entryMapper: EntryMapping = {
+    client: {
+      input: getEntry(options.client),
+      inputFullPath: normalizePath(path.resolve(getEntry(options.client))),
+      output: "static/entry-client.js",
+    },
+    ssr: {
+      input: getEntry(options.ssr),
+      inputFullPath: normalizePath(path.resolve(getEntry(options.ssr))),
+      output: "entry-ssr.js",
+    },
+    ...(apis
+      ? Object.keys(apis).reduce((entries, api) => {
+          entries[api] = {
+            input: getEntry(apis[api]),
+            inputFullPath: normalizePath(path.resolve(getEntry(apis[api]))),
+            output: `entry-${api}.js`,
+          };
+          return entries;
+        }, {} as EntryMapping)
+      : {}),
+  };
 
   return {
     name: "havelaer-vite-ssr",
@@ -78,7 +106,7 @@ export default function ssrPlugin(options: Options): Plugin {
     enforce: "pre", // To catch our client entry ?url imports
     config(config, env) {
       configEnv = env;
-      const outDirRoot = config.build?.outDir ?? "dist";
+      outDirRoot = config.build?.outDir ?? "dist";
 
       return {
         environments: {
@@ -89,9 +117,9 @@ export default function ssrPlugin(options: Options): Plugin {
               copyPublicDir: true,
               emptyOutDir: false,
               rollupOptions: {
-                input: normalizePath(path.resolve(getEntry(options.client))),
+                input: entryMapper.client.inputFullPath,
                 output: {
-                  entryFileNames: "static/entry-client.js",
+                  entryFileNames: entryMapper.client.output,
                   chunkFileNames: "static/assets/[name]-[hash].js",
                   assetFileNames: "static/assets/[name]-[hash][extname]",
                 },
@@ -105,9 +133,9 @@ export default function ssrPlugin(options: Options): Plugin {
               emptyOutDir: false,
               ssrEmitAssets: false,
               rollupOptions: {
-                input: normalizePath(path.resolve(getEntry(options.ssr))),
+                input: entryMapper.ssr.inputFullPath,
                 output: {
-                  entryFileNames: "entry-ssr.js",
+                  entryFileNames: entryMapper.ssr.output,
                   chunkFileNames: "assets/[name]-[hash].js",
                   assetFileNames: "assets/[name]-[hash][extname]",
                 },
@@ -120,9 +148,9 @@ export default function ssrPlugin(options: Options): Plugin {
                   apiEnvironments[api] = getEnvironment(config, {
                     build: {
                       rollupOptions: {
-                        input: normalizePath(path.resolve(getEntry(config))),
+                        input: entryMapper[api].inputFullPath,
                         output: {
-                          entryFileNames: `entry-${api}.js`,
+                          entryFileNames: entryMapper[api].output,
                         },
                       },
                       outDir: `${outDirRoot}/${api}`,
@@ -212,30 +240,65 @@ export default function ssrPlugin(options: Options): Plugin {
         });
       }
     },
-    resolveId(id, parent) {
+    async resolveId(id, parent) {
+      // Handle entry url imports
       if (id.endsWith("?url") && parent) {
-        const resolvedClientEntry = normalizePath(path.resolve(getEntry(options.client)));
+        const isDev = configEnv.command === "serve";
         const resolvedId = path.resolve(path.dirname(parent), id.slice(0, -4));
+        const resolvedEntry = Object.entries(entryMapper).find(
+          ([_, entry]) => entry.inputFullPath === resolvedId,
+        );
 
-        if (resolvedId === resolvedClientEntry) {
-          return `\0virtual:vite-ssr/client-entry-url`;
+        // Is not one of 'our' entry files
+        if (!resolvedEntry) return;
+
+        const [targetEnvName] = resolvedEntry;
+
+        if (targetEnvName === "client") {
+          return `\0virtual:vite-plugin-ssr/entry-client-url`;
+        } else {
+          if (isDev) {
+            return `\0${id}`;
+          } else {
+            return `\0${targetEnvName}?url`;
+          }
         }
       }
 
-      if (id.endsWith("@vite-ssr-entry-client")) {
-        return `\0virtual:vite-ssr/client-entry`;
+      // Client entry wrapper (dev)
+      if (id.endsWith(`@vite-plugin-ssr-entry-client`)) {
+        return `\0virtual:vite-plugin-ssr/resolved-entry-client-id`;
       }
     },
     load(id) {
-      if (id === `\0virtual:vite-ssr/client-entry-url`) {
-        if (configEnv.command === "build") {
-          return `export default "${resolvedConfig.base}static/entry-client.js";`;
+      // Client entry url
+      if (id.startsWith(`\0virtual:vite-plugin-ssr/entry-client-url`)) {
+        const isDev = configEnv.command === "serve";
+
+        if (isDev) {
+          return `export default "${resolvedConfig.base}@vite-plugin-ssr-entry-client";`;
         } else {
-          return `export default "${resolvedConfig.base}@vite-ssr-entry-client";`;
+          return `export default "${resolvedConfig.base}${entryMapper.client.output}";`;
         }
       }
 
-      if (id === `\0virtual:vite-ssr/client-entry`) {
+      // SSR or API entry url
+      if (id.startsWith(`\0`) && id.endsWith(`?url`)) {
+        const isDev = configEnv.command === "serve";
+
+        if (isDev) {
+          return `export default "${id.slice(1, -4)}";`;
+        } else {
+          const targetEnvName = id.slice(1, -4);
+          // From the importer walk back to our outDirRoot and then to the target env
+          return `
+const depth = import.meta.url.split("${outDirRoot}/")[1].split("/").length - 1;
+export default (depth > 0 ? "../".repeat(depth) : "./") + "${targetEnvName}/${entryMapper[targetEnvName].output}";`;
+        }
+      }
+
+      // Client entry wrapper (dev)
+      if (id === `\0virtual:vite-plugin-ssr/resolved-entry-client-id`) {
         // Wrap the user client entry with a plugin client entry and add the injected scripts
         const content = injectedScripts
           .map((script) => script.content || `import "${script.src}";`)
