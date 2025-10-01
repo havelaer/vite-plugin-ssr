@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Main package dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "havelaer"
+    assignees:
+      - "havelaer"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    # Only update minor and patch versions
+    versioning-strategy: "increase-if-necessary"
+    # Group minor and patch updates together
+    groups:
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
