@@ -11,8 +11,6 @@ import {
   type ViteDevServer,
 } from "vite";
 
-export type ServerEntryHandler = (req: Request) => Promise<Response>;
-
 interface BaseEnvConfig {
   entry: string;
   environment?: (env: EnvironmentOptions) => EnvironmentOptions;
@@ -38,14 +36,20 @@ type ResolvedOptions = {
   apis: Record<string, APIConfig>;
 };
 
+export type APIHandler = (request: Request) => Promise<Response>;
+
 export type Context<TApis extends string = never> = {
-  root: string;
   assets: {
     js: ({ path: string } | { content: string })[];
     css: ({ path: string } | { content: string })[];
   };
-  imports: { [P in TApis]: string };
+  apis: { [P in TApis]: APIHandler };
 };
+
+export type SSRHandler = <TApis extends string = never>(
+  request: Request,
+  ctx: Context<TApis>,
+) => Promise<Response>;
 
 function resolveOptions(options: Options): ResolvedOptions {
   return {
@@ -170,59 +174,15 @@ export default function ssrPlugin(options: Options): Plugin {
               force: true,
             });
 
-            const [client, ssr, ...apis] = (await Promise.all([
+            const outputs = (await Promise.all([
               builder.build(builder.environments.client),
               builder.build(builder.environments.ssr),
               ...apiEntries.map(([api]) => builder.build(builder.environments[api])),
             ])) as [RollupOutput, RollupOutput, ...RollupOutput[]];
 
-            console.log(client.output[0]);
-            console.log(client.output[1]);
-
-            const content: string[] = [];
-
-            content.push(`import { dirname } from 'node:path';`);
-            content.push(`import { fileURLToPath } from 'node:url';`);
-
-            const jsEntries = client.output.filter((chunk) => "isEntry" in chunk && chunk.isEntry);
-            const cssEntries = jsEntries.flatMap((chunk) =>
-              "viteMetadata" in chunk ? [...chunk.viteMetadata!.importedCss] : [],
-            );
-
-            const assets: Context["assets"] = {
-              js: jsEntries.map((chunk) => ({ path: `/${chunk.fileName}` })),
-              css: cssEntries.map((css) => ({ path: `/${css}` })),
-            };
-
-            const imports: Context["imports"] = {
-              ssr: `./ssr/${ssr.output[0].fileName}`,
-              ...apiEntries.reduce(
-                (imports, [api], index) => {
-                  imports[api] = `./${api}/${apis[index].output[0].fileName}`;
-                  return imports;
-                },
-                {} as Record<string, string>,
-              ),
-            };
-
-            content.push(`export const ctx = {`);
-            content.push(`  assets: ${JSON.stringify(assets)},`);
-            content.push(`  imports: ${JSON.stringify(imports)},`);
-            content.push(`  root: dirname(fileURLToPath(import.meta.url)),`);
-            content.push(`};`);
-
-            content.push(`import ssrFn from './ssr/${ssr.output[0].fileName}';`);
-            content.push(`export async function ssr(request) { return ssrFn(request, ctx); }`);
-
-            apiEntries.forEach(([api], index) => {
-              content.push(
-                `export { default as ${api} } from './${api}/${apis[index].output[0].fileName}';`,
-              );
-            });
-
             await fs.writeFile(
               path.resolve(builder.config.root, outDirRoot, "index.js"),
-              content.join("\n"),
+              createIndexContent(outputs, apiEntries),
             );
           },
         },
@@ -239,33 +199,22 @@ export default function ssrPlugin(options: Options): Plugin {
       assets = extractHtmlAssets(transformedHtml);
       assets.js.push({ path: resolvedOptions.client.entry });
 
-      const ssrContext: Context<keyof typeof options.apis> = {
-        assets,
-        imports: apiEntries.reduce(
-          (imports, [api, config]) => {
-            imports[api] = config.entry;
-            return imports;
-          },
-          {} as Record<string, string>,
-        ),
-        root: server.config.root,
-      };
+      const apiModules: Record<string, () => Promise<APIHandler>> = {};
 
-      if (options.apis) {
-        apiEntries.forEach(([api, config]) => {
-          const moduleRunner = createServerModuleRunner(server.environments[api]);
+      apiEntries.forEach(([api, config]) => {
+        const moduleRunner = createServerModuleRunner(server.environments[api]);
+        apiModules[api] = () => moduleRunner.import(config.entry).then((m) => m.default);
 
-          server.middlewares.use(async (req, res, next) => {
-            if (req.url?.startsWith(config.route)) {
-              const apiFetch = await moduleRunner.import(config.entry);
+        server.middlewares.use(async (req, res, next) => {
+          if (req.url?.startsWith(config.route)) {
+            const apiFetch = await apiModules[api]();
 
-              await getRequestListener(apiFetch.default)(req, res);
-              return;
-            }
-            next();
-          });
+            await getRequestListener(apiFetch)(req, res);
+            return;
+          }
+          next();
         });
-      }
+      });
 
       return async () => {
         server.middlewares.use(async (req, res, next) => {
@@ -274,8 +223,22 @@ export default function ssrPlugin(options: Options): Plugin {
           }
 
           try {
-            const ssrFetch = await ssrRunner.import(resolvedOptions.ssr.entry);
-            await getRequestListener((request) => ssrFetch.default(request, ssrContext))(req, res);
+            const imports = await Promise.all(apiEntries.map(([api]) => apiModules[api]()));
+            const ssrContext: Context<string> = {
+              assets,
+              apis: apiEntries.reduce(
+                (apis, [api], index) => {
+                  apis[api] = imports[index];
+                  return apis;
+                },
+                {} as Record<string, APIHandler>,
+              ),
+            };
+
+            const ssrFetch = await ssrRunner
+              .import(resolvedOptions.ssr.entry)
+              .then((m) => m.default);
+            await getRequestListener((request) => ssrFetch(request, ssrContext))(req, res);
           } catch (e: any) {
             viteServer?.ssrFixStacktrace(e);
             console.info(e.stack);
@@ -294,4 +257,49 @@ export default function ssrPlugin(options: Options): Plugin {
       }
     },
   };
+}
+
+type AppOutput = [RollupOutput, RollupOutput, ...RollupOutput[]];
+
+function createIndexContent(outputs: AppOutput, apiEntries: [string, APIConfig][]): string {
+  const [client, ssr, ...apis] = outputs;
+  const content: string[] = [];
+
+  content.push(`import { dirname } from 'node:path';`);
+  content.push(`import { fileURLToPath } from 'node:url';`);
+
+  // Import the SSR function
+  content.push(`import ssrFn from './ssr/${ssr.output[0].fileName}';`);
+  content.push(`async function ssr(request) { return ssrFn(request, ssrContext); }`);
+
+  // Import the API functions
+  apiEntries.forEach(([api], index) => {
+    content.push(`import ${api} from './${api}/${apis[index].output[0].fileName}';`);
+  });
+
+  // Create assets from the client output
+  const jsEntries = client.output.filter((chunk) => "isEntry" in chunk && chunk.isEntry);
+  const cssEntries = jsEntries.flatMap((chunk) =>
+    "viteMetadata" in chunk ? [...chunk.viteMetadata!.importedCss] : [],
+  );
+  const assets: Context["assets"] = {
+    js: jsEntries.map((chunk) => ({ path: `/${chunk.fileName}` })),
+    css: cssEntries.map((css) => ({ path: `/${css}` })),
+  };
+
+  // Create the SSR context object
+  content.push(`const ssrContext = {`);
+  content.push(`  assets: ${JSON.stringify(assets)},`);
+  content.push(`  apis: {`);
+  apiEntries.forEach(([api]) => {
+    content.push(`    ${api},`);
+  });
+  content.push(`  }`);
+  content.push(`};`);
+
+  // Export the SSR and API functions
+  const exports = ["ssr", ...apiEntries.map(([api]) => api)];
+  content.push(`export { ${exports.join(", ")} };`);
+
+  return content.join("\n");
 }
