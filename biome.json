@@ -1,4 +1,5 @@
 {
+  "$schema": "https://biomejs.dev/schemas/2.2.4/schema.json",
   "files": {
     "includes": ["./src/**/*", "./examples/**/src/**/*"]
   },
@@ -17,6 +18,9 @@
       "recommended": true,
       "suspicious": {
         "noExplicitAny": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off"
       }
     }
   }
