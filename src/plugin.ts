@@ -265,9 +265,6 @@ function createIndexContent(outputs: AppOutput, apiEntries: [string, APIConfig][
   const [client, ssr, ...apis] = outputs;
   const content: string[] = [];
 
-  content.push(`import { dirname } from 'node:path';`);
-  content.push(`import { fileURLToPath } from 'node:url';`);
-
   // Import the SSR function
   content.push(`import ssrFn from './ssr/${ssr.output[0].fileName}';`);
   content.push(`async function ssr(request) { return ssrFn(request, ssrContext); }`);
