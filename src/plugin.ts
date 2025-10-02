@@ -1,14 +1,13 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import * as cheerio from "cheerio";
+import fs from "node:fs/promises";
+import path from "node:path";
+import type { RollupOutput } from "rollup";
 import {
-  type ConfigEnv,
   createServerModuleRunner,
   type EnvironmentOptions,
   normalizePath,
   type Plugin,
-  type ResolvedConfig,
   type ViteDevServer,
 } from "vite";
 
@@ -24,7 +23,7 @@ interface ClientConfig extends BaseEnvConfig {}
 interface SSRConfig extends BaseEnvConfig {}
 
 interface APIConfig extends BaseEnvConfig {
-  route?: string;
+  route: string;
 }
 
 type Options = {
@@ -33,13 +32,37 @@ type Options = {
   apis?: Record<string, string | APIConfig>;
 };
 
-type EntryMapping = Record<string, { input: string; inputFullPath: string; output: string }>;
+type ResolvedOptions = {
+  client: ClientConfig;
+  ssr: SSRConfig;
+  apis: Record<string, APIConfig>;
+};
 
-function getEntry(config: string | BaseEnvConfig): string {
-  if (typeof config === "string") {
-    return config;
-  }
-  return config.entry;
+export type Context<TApis extends string = never> = {
+  root: string;
+  assets: {
+    js: ({ path: string } | { content: string })[];
+    css: ({ path: string } | { content: string })[];
+  };
+  imports: { [P in TApis]: string };
+};
+
+function resolveOptions(options: Options): ResolvedOptions {
+  return {
+    client: typeof options.client === "string" ? { entry: options.client } : options.client,
+    ssr: typeof options.ssr === "string" ? { entry: options.ssr } : options.ssr,
+    apis: options.apis
+      ? Object.entries(options.apis).reduce(
+          (apis, [api, config]) => {
+            const entry = typeof config === "string" ? config : config.entry;
+            const route = typeof config !== "string" && config.route ? config.route : `/${api}`;
+            apis[api] = { entry, route };
+            return apis;
+          },
+          {} as Record<string, APIConfig>,
+        )
+      : {},
+  };
 }
 
 function getEnvironment(
@@ -52,117 +75,93 @@ function getEnvironment(
   return config.environment?.(environment) ?? environment;
 }
 
-function extractHtmlScripts(html: string): Array<{ content?: string; src?: string }> {
+function extractHtmlAssets(html: string): Context["assets"] {
   const $ = cheerio.load(html);
-  const scripts: Array<{ content?: string; src?: string }> = [];
+  const assets: Context["assets"] = {
+    js: [],
+    css: [],
+  };
 
   $("script").each((_, element) => {
     const src = $(element).attr("src");
     const content = $(element).html() ?? undefined;
-    scripts.push({
-      src,
-      content,
-    });
+
+    assets.js.push(src ? { path: src } : { content: content! });
   });
 
-  return scripts;
+  $("link[rel='stylesheet']").each((_, element) => {
+    const src = $(element).attr("href")!;
+    assets.css.push({ path: src });
+  });
+
+  return assets;
 }
 
 export default function ssrPlugin(options: Options): Plugin {
+  const resolvedOptions = resolveOptions(options);
+  const apiEntries = Object.entries(resolvedOptions.apis);
   let viteServer: ViteDevServer | undefined;
-  let resolvedConfig: ResolvedConfig;
-  let configEnv: ConfigEnv;
-  let injectedScripts: Array<{ content?: string; src?: string }> = [];
+  let assets: Context["assets"] = { js: [], css: [] };
   let outDirRoot = "dist";
-
-  const { apis } = options;
-
-  const entryMapper: EntryMapping = {
-    client: {
-      input: getEntry(options.client),
-      inputFullPath: normalizePath(path.resolve(getEntry(options.client))),
-      output: "static/entry-client.js",
-    },
-    ssr: {
-      input: getEntry(options.ssr),
-      inputFullPath: normalizePath(path.resolve(getEntry(options.ssr))),
-      output: "entry-ssr.js",
-    },
-    ...(apis
-      ? Object.keys(apis).reduce((entries, api) => {
-          entries[api] = {
-            input: getEntry(apis[api]),
-            inputFullPath: normalizePath(path.resolve(getEntry(apis[api]))),
-            output: `entry-${api}.js`,
-          };
-          return entries;
-        }, {} as EntryMapping)
-      : {}),
-  };
 
   return {
     name: "havelaer-vite-ssr",
     sharedDuringBuild: true,
-    enforce: "pre", // To catch our client entry ?url imports
-    config(config, env) {
-      configEnv = env;
+    config(config) {
       outDirRoot = config.build?.outDir ?? "dist";
-
       return {
         environments: {
-          client: getEnvironment(options.client, {
+          client: getEnvironment(resolvedOptions.client, {
             build: {
               outDir: `${outDirRoot}/client`,
               emitAssets: true,
               copyPublicDir: true,
               emptyOutDir: false,
               rollupOptions: {
-                input: entryMapper.client.inputFullPath,
+                input: normalizePath(path.resolve(resolvedOptions.client.entry)),
                 output: {
-                  entryFileNames: entryMapper.client.output,
-                  chunkFileNames: "static/assets/[name]-[hash].js",
-                  assetFileNames: "static/assets/[name]-[hash][extname]",
-                },
-              },
-            },
-          }),
-          ssr: getEnvironment(options.ssr, {
-            build: {
-              outDir: `${outDirRoot}/ssr`,
-              copyPublicDir: false,
-              emptyOutDir: false,
-              ssrEmitAssets: false,
-              rollupOptions: {
-                input: entryMapper.ssr.inputFullPath,
-                output: {
-                  entryFileNames: entryMapper.ssr.output,
+                  entryFileNames: "[name]-[hash].js",
                   chunkFileNames: "assets/[name]-[hash].js",
                   assetFileNames: "assets/[name]-[hash][extname]",
                 },
               },
             },
           }),
-          ...(options.apis
-            ? Object.entries(options.apis).reduce(
-                (apiEnvironments, [api, config]) => {
-                  apiEnvironments[api] = getEnvironment(config, {
-                    build: {
-                      rollupOptions: {
-                        input: entryMapper[api].inputFullPath,
-                        output: {
-                          entryFileNames: entryMapper[api].output,
-                        },
-                      },
-                      outDir: `${outDirRoot}/${api}`,
-                      emptyOutDir: false,
-                      copyPublicDir: false,
-                    },
-                  });
-                  return apiEnvironments;
+          ssr: getEnvironment(resolvedOptions.ssr, {
+            build: {
+              outDir: `${outDirRoot}/ssr`,
+              copyPublicDir: false,
+              emptyOutDir: false,
+              ssrEmitAssets: false,
+              rollupOptions: {
+                input: normalizePath(path.resolve(resolvedOptions.ssr.entry)),
+                output: {
+                  entryFileNames: "[name].js",
+                  chunkFileNames: "assets/[name].js",
+                  assetFileNames: "assets/[name][extname]",
                 },
-                {} as Record<string, EnvironmentOptions>,
-              )
-            : {}),
+              },
+            },
+          }),
+          ...apiEntries.reduce(
+            (apiEnvironments, [api, config]) => {
+              apiEnvironments[api] = getEnvironment(config, {
+                build: {
+                  rollupOptions: {
+                    input: normalizePath(path.resolve(config.entry)),
+                    output: {
+                      entryFileNames: "[name].js",
+                    },
+                  },
+                  outDir: `${outDirRoot}/${api}`,
+                  emptyOutDir: false,
+                  copyPublicDir: false,
+                },
+              });
+              return apiEnvironments;
+            },
+            {} as Record<string, EnvironmentOptions>,
+          ),
         },
         builder: {
           async buildApp(builder) {
@@ -171,22 +170,64 @@ export default function ssrPlugin(options: Options): Plugin {
               force: true,
             });
 
-            await Promise.all([
+            const [client, ssr, ...apis] = (await Promise.all([
               builder.build(builder.environments.client),
               builder.build(builder.environments.ssr),
-              ...(options.apis
-                ? Object.entries(options.apis).map(([api]) =>
-                    builder.build(builder.environments[api]),
-                  )
-                : []),
-            ]);
+              ...apiEntries.map(([api]) => builder.build(builder.environments[api])),
+            ])) as [RollupOutput, RollupOutput, ...RollupOutput[]];
+
+            console.log(client.output[0]);
+            console.log(client.output[1]);
+
+            const content: string[] = [];
+
+            content.push(`import { dirname } from 'node:path';`);
+            content.push(`import { fileURLToPath } from 'node:url';`);
+
+            const jsEntries = client.output.filter((chunk) => "isEntry" in chunk && chunk.isEntry);
+            const cssEntries = jsEntries.flatMap((chunk) =>
+              "viteMetadata" in chunk ? [...chunk.viteMetadata!.importedCss] : [],
+            );
+
+            const assets: Context["assets"] = {
+              js: jsEntries.map((chunk) => ({ path: `/${chunk.fileName}` })),
+              css: cssEntries.map((css) => ({ path: `/${css}` })),
+            };
+
+            const imports: Context["imports"] = {
+              ssr: `./ssr/${ssr.output[0].fileName}`,
+              ...apiEntries.reduce(
+                (imports, [api], index) => {
+                  imports[api] = `./${api}/${apis[index].output[0].fileName}`;
+                  return imports;
+                },
+                {} as Record<string, string>,
+              ),
+            };
+
+            content.push(`export const ctx = {`);
+            content.push(`  assets: ${JSON.stringify(assets)},`);
+            content.push(`  imports: ${JSON.stringify(imports)},`);
+            content.push(`  root: dirname(fileURLToPath(import.meta.url)),`);
+            content.push(`};`);
+
+            content.push(`import ssrFn from './ssr/${ssr.output[0].fileName}';`);
+            content.push(`export async function ssr(request) { return ssrFn(request, ctx); }`);
+
+            apiEntries.forEach(([api], index) => {
+              content.push(
+                `export { default as ${api} } from './${api}/${apis[index].output[0].fileName}';`,
+              );
+            });
+
+            await fs.writeFile(
+              path.resolve(builder.config.root, outDirRoot, "index.js"),
+              content.join("\n"),
+            );
           },
         },
         appType: "custom",
       };
-    },
-    configResolved(config) {
-      resolvedConfig = config;
     },
     async configureServer(server) {
       viteServer = server;
@@ -195,16 +236,28 @@ export default function ssrPlugin(options: Options): Plugin {
       // Extract the scripts that Vite plugins would inject into the initial HTML
       const templateHtml = `<html><head></head><body></body></html>`;
       const transformedHtml = await server.transformIndexHtml("/", templateHtml);
-      injectedScripts = extractHtmlScripts(transformedHtml);
+      assets = extractHtmlAssets(transformedHtml);
+      assets.js.push({ path: resolvedOptions.client.entry });
+
+      const ssrContext: Context<keyof typeof options.apis> = {
+        assets,
+        imports: apiEntries.reduce(
+          (imports, [api, config]) => {
+            imports[api] = config.entry;
+            return imports;
+          },
+          {} as Record<string, string>,
+        ),
+        root: server.config.root,
+      };
 
       if (options.apis) {
-        Object.entries(options.apis).forEach(([api, config]) => {
+        apiEntries.forEach(([api, config]) => {
           const moduleRunner = createServerModuleRunner(server.environments[api]);
-          const route = typeof config !== "string" && config.route ? config.route : `/${api}`;
 
           server.middlewares.use(async (req, res, next) => {
-            if (req.url?.startsWith(route)) {
-              const apiFetch = await moduleRunner.import(getEntry(config));
+            if (req.url?.startsWith(config.route)) {
+              const apiFetch = await moduleRunner.import(config.entry);
 
               await getRequestListener(apiFetch.default)(req, res);
               return;
@@ -221,8 +274,8 @@ export default function ssrPlugin(options: Options): Plugin {
           }
 
           try {
-            const ssrFetch = await ssrRunner.import(getEntry(options.ssr));
-            await getRequestListener(ssrFetch.default)(req, res);
+            const ssrFetch = await ssrRunner.import(resolvedOptions.ssr.entry);
+            await getRequestListener((request) => ssrFetch.default(request, ssrContext))(req, res);
           } catch (e: any) {
             viteServer?.ssrFixStacktrace(e);
             console.info(e.stack);
@@ -238,72 +291,6 @@ export default function ssrPlugin(options: Options): Plugin {
         ctx.server.environments.client.hot.send({
           type: "full-reload",
         });
-      }
-    },
-    async resolveId(id, parent) {
-      // Handle entry url imports
-      if (id.endsWith("?url") && parent) {
-        const isDev = configEnv.command === "serve";
-        const resolvedId = path.resolve(path.dirname(parent), id.slice(0, -4));
-        const resolvedEntry = Object.entries(entryMapper).find(
-          ([_, entry]) => entry.inputFullPath === resolvedId,
-        );
-
-        // Is not one of 'our' entry files
-        if (!resolvedEntry) return;
-
-        const [targetEnvName] = resolvedEntry;
-
-        if (targetEnvName === "client") {
-          return `\0virtual:vite-plugin-ssr/entry-client-url`;
-        } else {
-          if (isDev) {
-            return `\0${id}`;
-          } else {
-            return `\0${targetEnvName}?url`;
-          }
-        }
-      }
-
-      // Client entry wrapper (dev)
-      if (id.endsWith(`@vite-plugin-ssr-entry-client`)) {
-        return `\0virtual:vite-plugin-ssr/resolved-entry-client-id`;
-      }
-    },
-    load(id) {
-      // Client entry url
-      if (id.startsWith(`\0virtual:vite-plugin-ssr/entry-client-url`)) {
-        const isDev = configEnv.command === "serve";
-
-        if (isDev) {
-          return `export default "${resolvedConfig.base}@vite-plugin-ssr-entry-client";`;
-        } else {
-          return `export default "${resolvedConfig.base}${entryMapper.client.output}";`;
-        }
-      }
-
-      // SSR or API entry url
-      if (id.startsWith(`\0`) && id.endsWith(`?url`)) {
-        const isDev = configEnv.command === "serve";
-
-        if (isDev) {
-          return `export default "${id.slice(1, -4)}";`;
-        } else {
-          const targetEnvName = id.slice(1, -4);
-          // From the importer walk back to our outDirRoot and then to the target env
-          return `
-const depth = import.meta.url.split("${outDirRoot}/")[1].split("/").length - 1;
-export default (depth > 0 ? "../".repeat(depth) : "./") + "${targetEnvName}/${entryMapper[targetEnvName].output}";`;
-        }
-      }
-
-      // Client entry wrapper (dev)
-      if (id === `\0virtual:vite-plugin-ssr/resolved-entry-client-id`) {
-        // Wrap the user client entry with a plugin client entry and add the injected scripts
-        const content = injectedScripts
-          .map((script) => script.content || `import "${script.src}";`)
-          .join("\n");
-        return `${content}\nawait import("${resolvedConfig.base}${getEntry(options.client)}");`;
       }
     },
   };

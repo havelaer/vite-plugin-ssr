@@ -1,28 +1,46 @@
-import clientEntryUrl from "./entry-client.ts?url";
-import apiEntryUrl from "./entry-api.ts?url";
+import path from "node:path";
+import type { Context } from "@havelaer/vite-plugin-ssr";
 
-export default async function fetch(request: Request): Promise<Response> {
-  const apiFetch = await import(/* @vite-ignore */ apiEntryUrl);
-
+export default async function fetch(request: Request, ctx: Context<"api">): Promise<Response> {
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
   headers.set("Cookie", request.headers.get("Cookie") ?? "");
 
+  const apiFetch = await import(/* @vite-ignore */ path.join(ctx.root, ctx.imports.api));
   const apiRequest = new Request(request.url, {
     headers,
   });
 
+  // Call the API from the SSR process directly without doing a HTTP roundtrip
   const apiResponse = await apiFetch.default(apiRequest).then((r: any) => r.json());
 
-  return new Response(`
+  return new Response(
+    `
+    ${ctx.assets.css
+      .map((css) =>
+        "path" in css
+          ? `<link rel="stylesheet" href="${css.path}" />`
+          : `<style>${css.content}</style>`,
+      )
+      .join("\n")}
+
     <h1>Rendered on server</h1>
     <div id="app"></div>
     <div id="api"></div>
     <div><h1>Fetched from server: ${apiResponse.message}</h1></div>
-    <script src="${clientEntryUrl}" type="module"></script>
-  `, {
-    headers: {
-      "Content-Type": "text/html",
+
+    ${ctx.assets.js
+      .map((js) =>
+        "path" in js
+          ? `<script src="${js.path}" type="module"></script>`
+          : `<script type="module">${js.content}</script>`,
+      )
+      .join("\n")}
+  `,
+    {
+      headers: {
+        "Content-Type": "text/html",
+      },
     },
-  });
+  );
 }

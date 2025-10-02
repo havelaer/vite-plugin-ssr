@@ -17,8 +17,8 @@
     "bin"
   ],
   "scripts": {
-    "build": "tsdown src/plugin.ts --dts",
-    "dev": "tsdown src/plugin.ts --dts --watch",
+    "build": "tsdown src/plugin.ts src/env.ts --dts",
+    "dev": "tsdown src/plugin.ts src/env.ts --dts --watch",
     "check": "biome check .",
     "prepublishOnly": "npm run check -- --fix && npm run build && npm version patch -m 'chore: publishing version %s'",
     "test": "echo \"Error: no test specified\" && exit 1"

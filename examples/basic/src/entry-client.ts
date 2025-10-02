@@ -1,5 +1,7 @@
+import "./styles.css";
+
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-  <h1>Rendered from client</h1>
+  <h1 class="blue">Rendered from client</h1>
 `;
 
 fetch("/api").then((res) => res.json()).then((data) => {

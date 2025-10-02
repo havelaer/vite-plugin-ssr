@@ -45,12 +45,12 @@ Setup your SSR entry. This serves the HTML based on the request.
 
 ```ts
 // src/entry-ssr.ts
-import clientEntryUrl from "./entry-client.ts?url";
+import ctx from "@havelaer/vite-plugin-ssr/context";
 
-export default function fetch(request: Request): Promise<Response> {
+export default async function fetch(request: Request): Promise<Response> {
   return new Response(`
     <h1>Hello from server</h1>
-    <script src="${clientEntryUrl}" type="module"></script>
+    <script src="${ctx().client.src}" type="module"></script>
   `, {
     headers: {
       "Content-Type": "text/html",
@@ -63,7 +63,7 @@ Optionally, setup your API entry.
 
 ```ts
 // src/entry-api.ts
-export default function fetch(request: Request): Promise<Response> {
+export default async function fetch(request: Request): Promise<Response> {
   return new Response(JSON.stringify({
     message: "Hello from the API",
   }), {
