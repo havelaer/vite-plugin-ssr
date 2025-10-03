@@ -45,12 +45,10 @@ Setup your SSR entry. This serves the HTML based on the request.
 
 ```ts
 // src/entry-ssr.ts
-import ctx from "@havelaer/vite-plugin-ssr/context";
-
-export default async function fetch(request: Request): Promise<Response> {
+export default async (request: Request, ctx: Context): Promise<Response> => {
   return new Response(`
-    <h1>Hello from server</h1>
-    <script src="${ctx().client.src}" type="module"></script>
+    <p>Hello from server</p>
+    <script src="${ctx.assets.js[0].path}" type="module"></script>
   `, {
     headers: {
       "Content-Type": "text/html",
@@ -63,7 +61,7 @@ Optionally, setup your API entry.
 
 ```ts
 // src/entry-api.ts
-export default async function fetch(request: Request): Promise<Response> {
+export default async (request: Request): Promise<Response> => {
   return new Response(JSON.stringify({
     message: "Hello from the API",
   }), {
@@ -96,16 +94,15 @@ Setup a server. You can use any server and any runtime. For this example we're u
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import apiFetch from "./dist/api/entry-api.js";
-import ssrFetch from "./dist/ssr/entry-ssr.js";
+import { api, ssr, ssrContext } from "./dist/index.js";
 
 const app = new Hono();
 
 app.use(serveStatic({ root: "./dist/client" }));
 
-app.use("/api/*", (c) => apiFetch(c.req.raw));
+app.use("/api/*", (c) => api(c.req.raw));
 
-app.use((c) => ssrFetch(c.req.raw));
+app.use((c) => ssr(c.req.raw, ssrContext));
 
 serve(app, (info) => {
   console.log(`Listening on http://localhost:${info.port}`);
