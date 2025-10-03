@@ -8,6 +8,7 @@ import {
   type EnvironmentOptions,
   normalizePath,
   type Plugin,
+  ResolvedConfig,
   type ViteDevServer,
 } from "vite";
 
@@ -38,11 +39,13 @@ type ResolvedOptions = {
 
 export type APIHandler = (request: Request) => Promise<Response>;
 
+export type HtmlAssets = {
+  js: string;
+  css: string[];
+};
+
 export type Context<TApis extends string = never> = {
-  assets: {
-    js: ({ path: string } | { content: string })[];
-    css: ({ path: string } | { content: string })[];
-  };
+  assets: HtmlAssets;
   apis: { [P in TApis]: APIHandler };
 };
 
@@ -79,34 +82,31 @@ function getEnvironment(
   return config.environment?.(environment) ?? environment;
 }
 
-function extractHtmlAssets(html: string): Context["assets"] {
+type InjectedScript = { content?: string; src?: string };
+
+function extractHtmlScripts(html: string): InjectedScript[] {
   const $ = cheerio.load(html);
-  const assets: Context["assets"] = {
-    js: [],
-    css: [],
-  };
+  const scripts: InjectedScript[] = [];
 
   $("script").each((_, element) => {
     const src = $(element).attr("src");
     const content = $(element).html() ?? undefined;
-
-    assets.js.push(src ? { path: src } : { content: content! });
+    scripts.push({
+      src,
+      content,
+    });
   });
 
-  $("link[rel='stylesheet']").each((_, element) => {
-    const src = $(element).attr("href")!;
-    assets.css.push({ path: src });
-  });
-
-  return assets;
+  return scripts;
 }
 
 export default function ssrPlugin(options: Options): Plugin {
   const resolvedOptions = resolveOptions(options);
   const apiEntries = Object.entries(resolvedOptions.apis);
+  let injectedScripts: InjectedScript[];
   let viteServer: ViteDevServer | undefined;
-  let assets: Context["assets"] = { js: [], css: [] };
   let outDirRoot = "dist";
+  let resolvedConfig: ResolvedConfig;
 
   return {
     name: "havelaer-vite-ssr",
@@ -142,7 +142,7 @@ export default function ssrPlugin(options: Options): Plugin {
                 output: {
                   entryFileNames: "[name].js",
                   chunkFileNames: "assets/[name].js",
-                  assetFileNames: "assets/[name][extname]",
+                  assetFileNames: "assets/[name]-[hash][extname]", // same as client
                 },
               },
             },
@@ -189,6 +189,9 @@ export default function ssrPlugin(options: Options): Plugin {
         appType: "custom",
       };
     },
+    configResolved(config) {
+      resolvedConfig = config;
+    },
     async configureServer(server) {
       viteServer = server;
       const ssrRunner = createServerModuleRunner(server.environments.ssr);
@@ -196,8 +199,7 @@ export default function ssrPlugin(options: Options): Plugin {
       // Extract the scripts that Vite plugins would inject into the initial HTML
       const templateHtml = `<html><head></head><body></body></html>`;
       const transformedHtml = await server.transformIndexHtml("/", templateHtml);
-      assets = extractHtmlAssets(transformedHtml);
-      assets.js.push({ path: resolvedOptions.client.entry });
+      injectedScripts = extractHtmlScripts(transformedHtml);
 
       const apiModules: Record<string, () => Promise<APIHandler>> = {};
 
@@ -225,7 +227,10 @@ export default function ssrPlugin(options: Options): Plugin {
           try {
             const imports = await Promise.all(apiEntries.map(([api]) => apiModules[api]()));
             const ssrContext: Context<string> = {
-              assets,
+              assets: {
+                js: "/@client-entry",
+                css: [],
+              },
               apis: apiEntries.reduce(
                 (apis, [api], index) => {
                   apis[api] = imports[index];
@@ -248,6 +253,22 @@ export default function ssrPlugin(options: Options): Plugin {
         });
       };
     },
+    resolveId(id) {
+      if (id === "/@client-entry") {
+        return "\0virtual:@client-entry";
+      }
+      return null;
+    },
+    load(id) {
+      if (id === "\0virtual:@client-entry") {
+        // Wrap the injected scripts and the configured client entry in a virtual entry module
+        const content = injectedScripts
+          .map((script) => script.content || `import "${script.src}";`)
+          .join("\n");
+        return `${content}\nawait import("${resolvedConfig.base}${resolvedOptions.client.entry}");`;
+      }
+      return null;
+    },
     hotUpdate(ctx) {
       // Auto refresh client if ssr is updated
       if (this.environment.name === "ssr" && ctx.modules.length > 0) {
@@ -267,22 +288,20 @@ function createIndexContent(outputs: AppOutput, apiEntries: [string, APIConfig][
 
   // Import the SSR function
   content.push(`import ssr from './ssr/${ssr.output[0].fileName}';`);
-  
+
   // Import the API functions
   apiEntries.forEach(([api], index) => {
     content.push(`import ${api} from './${api}/${apis[index].output[0].fileName}';`);
   });
-  
+
   content.push(`async function ssrWithContext(request) { return ssr(request, ssrContext); }`);
-  
+
   // Create assets from the client output
-  const jsEntries = client.output.filter((chunk) => "isEntry" in chunk && chunk.isEntry);
-  const cssEntries = jsEntries.flatMap((chunk) =>
-    "viteMetadata" in chunk ? [...chunk.viteMetadata!.importedCss] : [],
-  );
-  const assets: Context["assets"] = {
-    js: jsEntries.map((chunk) => ({ path: `/${chunk.fileName}` })),
-    css: cssEntries.map((css) => ({ path: `/${css}` })),
+  const jsEntry = client.output[0];
+  const cssEntries = [...(jsEntry?.viteMetadata?.importedCss ?? [])];
+  const assets: HtmlAssets = {
+    js: `/${jsEntry.fileName}`,
+    css: cssEntries.map((css) => `/${css}`),
   };
 
   // Create the SSR context object
