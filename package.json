@@ -17,8 +17,8 @@
     "bin"
   ],
   "scripts": {
-    "build": "tsdown src/plugin.ts src/env.ts --dts",
-    "dev": "tsdown src/plugin.ts src/env.ts --dts --watch",
+    "build": "tsdown src/plugin.ts --dts",
+    "dev": "tsdown src/plugin.ts --dts --watch ./src",
     "check": "biome check .",
     "prepublishOnly": "npm run check -- --fix && npm run build && npm version patch -m 'chore: publishing version %s'",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -40,8 +40,8 @@
     "@biomejs/biome": "2.2.4",
     "@types/node": "^24.1.0",
     "tsdown": "^0.13.1",
-    "typescript": "^5.9.2",
-    "vite": "^7.1.0"
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7"
   },
   "dependencies": {
     "@hono/node-server": "^1.18.0",
