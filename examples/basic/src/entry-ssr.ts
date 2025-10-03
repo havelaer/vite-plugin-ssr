@@ -10,7 +10,8 @@ export default async function fetch(request: Request, ctx: Context<"api">): Prom
   // Call the API Handler from the SSR Handler directly without doing a HTTP roundtrip
   const apiResponse = await ctx.apis.api(apiRequest).then((r: any) => r.json());
 
-  return new Response(`
+  return new Response(
+    `
       ${ctx.assets.css.map((css: any) => `<link rel="stylesheet" href="${css}" />`).join("\n")}
       <h1>Rendered on server</h1>
       <div id="app"></div>

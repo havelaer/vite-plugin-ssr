@@ -8,7 +8,7 @@ import {
   type EnvironmentOptions,
   normalizePath,
   type Plugin,
-  ResolvedConfig,
+  type ResolvedConfig,
   type ViteDevServer,
 } from "vite";
 
