@@ -266,14 +266,15 @@ function createIndexContent(outputs: AppOutput, apiEntries: [string, APIConfig][
   const content: string[] = [];
 
   // Import the SSR function
-  content.push(`import ssrFn from './ssr/${ssr.output[0].fileName}';`);
-  content.push(`async function ssr(request) { return ssrFn(request, ssrContext); }`);
-
+  content.push(`import ssr from './ssr/${ssr.output[0].fileName}';`);
+  
   // Import the API functions
   apiEntries.forEach(([api], index) => {
     content.push(`import ${api} from './${api}/${apis[index].output[0].fileName}';`);
   });
-
+  
+  content.push(`async function ssrWithContext(request) { return ssr(request, ssrContext); }`);
+  
   // Create assets from the client output
   const jsEntries = client.output.filter((chunk) => "isEntry" in chunk && chunk.isEntry);
   const cssEntries = jsEntries.flatMap((chunk) =>
@@ -294,8 +295,8 @@ function createIndexContent(outputs: AppOutput, apiEntries: [string, APIConfig][
   content.push(`  }`);
   content.push(`};`);
 
-  // Export the SSR and API functions
-  const exports = ["ssr", ...apiEntries.map(([api]) => api)];
+  // Export the SSR and API functions, and SSR context
+  const exports = ["ssr", "ssrWithContext", "ssrContext", ...apiEntries.map(([api]) => api)];
   content.push(`export { ${exports.join(", ")} };`);
 
   return content.join("\n");
