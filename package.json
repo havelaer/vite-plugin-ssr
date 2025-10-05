@@ -17,10 +17,11 @@
     "bin"
   ],
   "scripts": {
-    "build": "tsdown src/plugin.ts --dts",
     "dev": "tsdown src/plugin.ts --dts --watch ./src",
     "check": "biome check .",
-    "prepublishOnly": "npm run check -- --fix && npm run build && npm version patch -m 'chore: publishing version %s'",
+    "release": "npm run check && tsc && npm version patch -m 'chore: bump version %s'",
+    "postrelease": "git push && git push --tags",
+    "build": "tsdown src/plugin.ts --dts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
