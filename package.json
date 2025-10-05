@@ -6,6 +6,10 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/havelaer/vite-plugin-ssr.git"
+  },
   "exports": {
     ".": {
       "import": "./dist/plugin.js",
