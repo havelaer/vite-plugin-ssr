@@ -2,35 +2,6 @@
 
 A powerful Vite plugin that enables Server-Side Rendering (SSR) with optional API servers. Built with Vite's new [Environment API](https://vite.dev/guide/api-environment.html) for optimal performance and developer experience.
 
-
-## Quick Start
-
-1. Install the plugin:
-   ```bash
-   npm install @havelaer/vite-plugin-ssr
-   ```
-
-2. Configure your `vite.config.ts`:
-   ```ts
-   import { defineConfig } from "vite";
-   import ssr from "@havelaer/vite-plugin-ssr";
-
-   export default defineConfig({
-     plugins: [ssr({
-       client: "src/entry-client.ts",
-       ssr: "src/entry-ssr.ts",
-       apis: {
-         api: "src/entry-api.ts",
-       },
-     })],
-   });
-   ```
-
-3. Create your entry files and start developing:
-   ```bash
-   npm run dev
-   ```
-
 ## Features
 
 - 🚀 **Built with Vite's Environment API** - Leverages the latest Vite features for optimal performance
