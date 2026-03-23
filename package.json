@@ -42,7 +42,7 @@
     "examples/*"
   ],
   "devDependencies": {
-    "@biomejs/biome": "2.4.7",
+    "@biomejs/biome": "2.4.8",
     "@types/node": "^25.0.2",
     "tsdown": "^0.21.3",
     "typescript": "^5.9.3",
